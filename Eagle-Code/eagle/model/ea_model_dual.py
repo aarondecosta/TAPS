@@ -9,6 +9,7 @@ same accepted hidden states every step.
 import json
 import os
 import torch
+import torch.cuda
 import torch.nn as nn
 import torch.nn.functional as F
 from huggingface_hub import hf_hub_download
@@ -114,6 +115,10 @@ class DualEaModel(nn.Module):
         self.ea_layer2 = ea_layer2
         self.head1_name = head1_name
         self.head2_name = head2_name
+
+        # To achieve parallel drafting to some extent
+        self.draft_stream1 = torch.cuda.Stream()
+        self.draft_stream2 = torch.cuda.Stream()
 
     # ------------------------------------------------------------------
     # Construction
@@ -276,14 +281,38 @@ class DualEaModel(nn.Module):
         Returns:
             (draft_tokens, retrieve_indices, tree_mask, tree_position_ids)
         """
-        r1 = self.ea_layer1.topK_genrate(
-            hidden_states, input_ids, self.base_model.lm_head,
-            logits_processor, return_confidence=True,
-        )
-        r2 = self.ea_layer2.topK_genrate(
-            hidden_states, input_ids, self.base_model.lm_head,
-            logits_processor, return_confidence=True,
-        )
+
+        s1 = self.draft_stream1
+        s2 = self.draft_stream2
+
+        current_stream = torch.cuda.current_stream()
+
+        # Side streams must wait for main-stream work that produced the inputs
+        s1.wait_stream(current_stream)
+        s2.wait_stream(current_stream)
+
+        with torch.cuda.stream(s1):
+            r1 = self.ea_layer1.topK_genrate(
+                hidden_states, input_ids, self.base_model.lm_head,
+                logits_processor, return_confidence=True,
+            )
+            for t in r1:
+                if torch.is_tensor(t) and t.is_cuda:
+                    t.record_stream(current_stream)
+
+        with torch.cuda.stream(s2):
+            r2 = self.ea_layer2.topK_genrate(
+                hidden_states, input_ids, self.base_model.lm_head,
+                logits_processor, return_confidence=True,
+            )
+            for t in r2:
+                if torch.is_tensor(t) and t.is_cuda:
+                    t.record_stream(current_stream)
+
+        # Main stream must wait for both before consuming results
+        current_stream.wait_stream(s1)
+        current_stream.wait_stream(s2)
+
         draft_tokens1, retrieve_indices1, tree_mask1, tree_pos1, _ = r1
         draft_tokens2, retrieve_indices2, tree_mask2, tree_pos2, _ = r2
 

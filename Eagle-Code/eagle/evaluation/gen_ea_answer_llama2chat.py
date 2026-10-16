@@ -3,23 +3,20 @@
 Usage:
 python3 gen_model_answer.py --model-path lmsys/fastchat-t5-3b-v1.0 --model-id fastchat-t5-3b-v1.0
 """
+from ..model.utils import *
+from ..model.kv_cache import initialize_past_key_values
+from ..model.ea_model import EaModel
+from tqdm import tqdm
+from fastchat.model import get_conversation_template
+from fastchat.llm_judge.common import load_questions
+import shortuuid
+import time
 import argparse
 import json
 import os
 script_dir = os.path.dirname(__file__)
 parent_dir = os.path.dirname(script_dir)
 # os.environ["CUDA_VISIBLE_DEVICES"] = "6,7"
-import time
-
-import shortuuid
-from fastchat.llm_judge.common import load_questions
-from fastchat.model import get_conversation_template
-from tqdm import tqdm
-
-from ..model.ea_model import EaModel
-from ..model.kv_cache import initialize_past_key_values
-from ..model.utils import *
-
 
 
 def run_eval(
@@ -207,7 +204,6 @@ def get_model_answers(
                 prompt = conv.get_prompt() + " "
                 input_ids = tokenizer([prompt]).input_ids
 
-
                 torch.cuda.synchronize()
                 start_time = time.time()
                 output_ids, new_token, idx = model.eagenerate(
@@ -244,7 +240,6 @@ def get_model_answers(
 
                 if conv.name == "xgen" and output.startswith("Assistant:"):
                     output = output.replace("Assistant:", "", 1).strip()
-
 
                 turns.append(output)
                 idxs.append(int(idx))

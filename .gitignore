@@ -185,3 +185,11 @@ results/
 
 # Claude Code settings
 .claude/
+
+# New
+scripts/
+results/
+logs/
+eagle-venv
+Eagle-Code/eagle/data
+Eagle-Code/scripts
